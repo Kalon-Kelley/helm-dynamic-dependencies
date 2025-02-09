@@ -47,6 +47,9 @@ type Dependency struct {
 	ImportValues []interface{} `json:"import-values,omitempty" yaml:"import-values,omitempty"`
 	// Alias usable alias to be used for the chart
 	Alias string `json:"alias,omitempty" yaml:"alias,omitempty"`
+	// Dynamic bool determines if dependency is installed dynamically (at
+	// install time, not packaged)
+	Dynamic bool `json:"dynamic,omitempty" yaml:"dynamic,omitempty"`
 }
 
 // Validate checks for common problems with the dependency datastructure in

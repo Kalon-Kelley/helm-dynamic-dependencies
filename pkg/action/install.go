@@ -722,7 +722,9 @@ OUTER:
 				continue OUTER
 			}
 		}
-		missing = append(missing, r.Name)
+		if !r.Dynamic {
+			missing = append(missing, r.Name)
+		}
 	}
 
 	if len(missing) > 0 {
