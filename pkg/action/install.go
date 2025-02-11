@@ -733,6 +733,21 @@ OUTER:
 	return nil
 }
 
+// GetDynamicDependencies gets the dynamic dependencies for a chart.
+func GetDynamicDependencies(ch *chart.Chart, reqs []*chart.Dependency) ([]*chart.Dependency, error) {
+	var dynamic []*chart.Dependency
+
+OUTER:
+	for _, r := range reqs {
+		if !r.Dynamic {
+			continue OUTER
+		}
+		dynamic = append(dynamic, r)
+	}
+
+	return dynamic, nil
+}
+
 // LocateChart looks for a chart directory in known places, and returns either the full path or an error.
 //
 // This does not ensure that the chart is well-formed; only that the requested filename exists.
