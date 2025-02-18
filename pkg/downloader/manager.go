@@ -150,6 +150,24 @@ func (m *Manager) Build() error {
 // negotiate versions based on that. It will download the versions
 // from remote chart repositories unless SkipUpdate is true.
 func (m *Manager) Update() error {
+	if fi, err := os.Stat(m.ChartPath); err != nil {
+		return err
+	} else if !fi.IsDir() {
+		file, err := os.Open(m.ChartPath)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		chartdir := filepath.Dir(m.ChartPath)
+		if err := os.MkdirAll(chartdir, 0755); err != nil {
+			return err
+		}
+
+		if err := chartutil.Expand(chartdir, file); err != nil {
+			return err
+		}
+		m.ChartPath = chartdir
+	}
 	c, err := m.loadChartDir()
 	if err != nil {
 		return err
