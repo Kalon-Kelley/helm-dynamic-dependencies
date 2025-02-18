@@ -34,6 +34,7 @@ import (
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/chart"
 	"helm.sh/helm/v4/pkg/chart/loader"
+	// "helm.sh/helm/v4/pkg/chartutil"
 	"helm.sh/helm/v4/pkg/cli/output"
 	"helm.sh/helm/v4/pkg/cli/values"
 	"helm.sh/helm/v4/pkg/downloader"
@@ -311,14 +312,10 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 				return nil, err
 			}
 			// Reload the chart with the updated Chart.lock file.
-			if chartRequested, err = loader.Load(cp); err != nil {
+			if chartRequested, err = loader.Load(man.ChartPath); err != nil {
 				return nil, errors.Wrap(err, "failed reloading chart after repo update")
 			}
 		}
-
-		// if err := action.ResolveDynamicDependencies(chartRequested, req); err != nil {
-		// 	fmt.Println("Yeah")
-		// }
 	}
 
 	client.Namespace = settings.Namespace()

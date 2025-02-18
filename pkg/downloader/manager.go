@@ -157,16 +157,30 @@ func (m *Manager) Update() error {
 		if err != nil {
 			return err
 		}
-		defer file.Close()
-		chartdir := filepath.Dir(m.ChartPath)
-		if err := os.MkdirAll(chartdir, 0755); err != nil {
-			return err
+		baseDir := filepath.Dir(m.ChartPath)
+		var chartName string
+		files, err := loader.LoadArchiveFiles(file)
+		file.Close()
+		for _, f := range files {
+			if f.Name == "Chart.yaml" {
+				ch := &chart.Metadata{}
+				if err := yaml.Unmarshal(f.Data, ch); err != nil {
+					return err
+				}
+				chartName = ch.Name
+			}
 		}
+		chartDir := filepath.Join(baseDir, chartName)
+		fmt.Println("CHARTDIR", chartDir)
 
-		if err := chartutil.Expand(chartdir, file); err != nil {
+		file1, err := os.Open(m.ChartPath)
+		if err != nil {
 			return err
 		}
-		m.ChartPath = chartdir
+		if err := chartutil.Expand(baseDir, file1); err != nil {
+			return err
+		}
+		m.ChartPath = chartDir
 	}
 	c, err := m.loadChartDir()
 	if err != nil {
