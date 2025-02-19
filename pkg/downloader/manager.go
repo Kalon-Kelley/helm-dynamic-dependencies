@@ -150,38 +150,24 @@ func (m *Manager) Build() error {
 // negotiate versions based on that. It will download the versions
 // from remote chart repositories unless SkipUpdate is true.
 func (m *Manager) Update() error {
-	if fi, err := os.Stat(m.ChartPath); err != nil {
-		return err
-	} else if !fi.IsDir() {
-		file, err := os.Open(m.ChartPath)
-		if err != nil {
-			return err
-		}
-		baseDir := filepath.Dir(m.ChartPath)
-		var chartName string
-		files, err := loader.LoadArchiveFiles(file)
-		file.Close()
-		for _, f := range files {
-			if f.Name == "Chart.yaml" {
-				ch := &chart.Metadata{}
-				if err := yaml.Unmarshal(f.Data, ch); err != nil {
-					return err
-				}
-				chartName = ch.Name
-			}
-		}
-		chartDir := filepath.Join(baseDir, chartName)
-		fmt.Println("CHARTDIR", chartDir)
-
-		file1, err := os.Open(m.ChartPath)
-		if err != nil {
-			return err
-		}
-		if err := chartutil.Expand(baseDir, file1); err != nil {
-			return err
-		}
-		m.ChartPath = chartDir
-	}
+	// TODO(kalon-kelley): if the chart is a tar then untar it and set the
+	// m.ChartPath to the untarred chart
+	// Maybe for Update don't untar and keep original behavior where only chart
+	// directories can be updated?
+	// Construct req base on only non-dynamic deps and download all
+	// For each of the non-dynamic deps run GetDynamic
+	// * This will ensure all of the non-dynamic dependencies are available
+	//   this can stop at any non-dynamic dependency as in order for the
+	//   dependency to have been packaged all of its dependencies must have been
+	//   satisfied (if wanted we can call CheckDependencies after each
+	//   resolution to ensure this)
+	//
+	// FUNC getSubchartPaths would take a list of subchart names, and a basedir
+	// returns a list of the basedir + /charts/ + name, check if m.ChartPath is
+	// local or absolute
+	//
+	// In this Update func get the subchart paths for all non-dynamic charts
+	// then call GetDynamic with each subchart path
 	c, err := m.loadChartDir()
 	if err != nil {
 		return err
@@ -189,7 +175,12 @@ func (m *Manager) Update() error {
 
 	// If no dependencies are found, we consider this a successful
 	// completion.
-	req := c.Metadata.Dependencies
+	var req []*chart.Dependency
+	for _, r := range c.Metadata.Dependencies {
+		if r.Dynamic != true {
+			req = append(req, r)
+		}
+	}
 	if req == nil {
 		return nil
 	}
@@ -231,6 +222,166 @@ func (m *Manager) Update() error {
 	// Now we need to fetch every package here into charts/
 	if err := m.downloadAll(lock.Dependencies); err != nil {
 		return err
+	}
+
+	// Resolve all static dependencies dynamic dependencies, this is necessary
+	// to ensure that if a dependency is statically included (not dynamic) no
+	// dynamic resolution will be necessary at install time
+	c, err = m.loadChartDir()
+OUTER:
+	for _, r := range req {
+		for _, d := range c.Dependencies() {
+			if d.Name() != r.Name {
+				continue
+			}
+			subchartPath := filepath.Join(m.ChartPath, "charts", d.Fname)
+			man := &Manager{
+				Out:              m.Out,
+				ChartPath:        subchartPath,
+				Keyring:          m.Keyring,
+				SkipUpdate:       true,
+				Getters:          m.Getters,
+				RepositoryConfig: m.RepositoryConfig,
+				RepositoryCache:  m.RepositoryCache,
+				Debug:            m.Debug,
+				RegistryClient:   m.RegistryClient,
+			}
+			if err := man.GetDynamic(); err != nil {
+				return errors.Wrap(err, "failed to get dynamic dependencies of static charts")
+			}
+			continue OUTER
+		}
+	}
+	// Do this last, call resolveDynamicDeps before ---
+
+	// downloadAll might overwrite dependency version, recalculate lock digest
+	newDigest, err := resolver.HashReq(req, lock.Dependencies)
+	if err != nil {
+		return err
+	}
+	lock.Digest = newDigest
+
+	// If the lock file hasn't changed, don't write a new one.
+	oldLock := c.Lock
+	if oldLock != nil && oldLock.Digest == lock.Digest {
+		return nil
+	}
+
+	// Finally, we need to write the lockfile.
+	return writeLock(m.ChartPath, lock, c.Metadata.APIVersion == chart.APIVersionV1)
+}
+
+// Resolves a local charts dynamic dependencies.
+//
+// It first ensures the cart in question is extracted into a dir if it is a
+// tarball. Performs similar functionality to Update function but inversed, req
+// is only dynamic dependencies not static dependencies. Recurses on itself
+// resolving the entire chain until no dynamic dependencies are left (the
+// assumption that static dependencies MUST be fully resolved can be made due to
+// dependency update ensuring this)
+func (m *Manager) GetDynamic() error {
+	if filepath.Ext(m.ChartPath) == ".tgz" {
+		file, err := os.Open(m.ChartPath)
+		if err != nil {
+			return err
+		}
+		baseDir := filepath.Dir(m.ChartPath)
+		var chartName string
+		files, err := loader.LoadArchiveFiles(file)
+		file.Close()
+		for _, f := range files {
+			if f.Name != "Chart.yaml" {
+				continue
+			}
+			ch := &chart.Metadata{}
+			if err := yaml.Unmarshal(f.Data, ch); err != nil {
+				return err
+			}
+			chartName = ch.Name
+		}
+		chartDir := filepath.Join(baseDir, chartName)
+		file, err = os.Open(m.ChartPath)
+		if err != nil {
+			return err
+		}
+		if err := chartutil.Expand(baseDir, file); err != nil {
+			return err
+		}
+		file.Close()
+		m.ChartPath = chartDir
+	}
+
+	c, err := m.loadChartDir()
+	if err != nil {
+		return err
+	}
+
+	var req []*chart.Dependency
+	for _, r := range c.Metadata.Dependencies {
+		if r.Dynamic == true {
+			req = append(req, r)
+		}
+	}
+	if req == nil {
+		return nil
+	}
+
+	repoNames, err := m.resolveRepoNames(req)
+	if err != nil {
+		return err
+	}
+
+	repoNames, err = m.ensureMissingRepos(repoNames, req)
+	if err != nil {
+		return err
+	}
+
+	// For each of the repositories Helm is configured to know about, update
+	// the index information locally. This will never occur on recursive calls
+	// as SkipUpdate is set to true (avoids redundant updating)
+	if !m.SkipUpdate {
+		if err := m.UpdateRepositories(); err != nil {
+			return err
+		}
+	}
+
+	// Now we need to find out which version of a chart best satisfies the
+	// dependencies in the Chart.yaml
+	lock, err := m.resolve(req, repoNames)
+	if err != nil {
+		return err
+	}
+
+	// Now we need to fetch every package here into charts/
+	if err := m.downloadAll(lock.Dependencies); err != nil {
+		return err
+	}
+
+	// Recursively resolve all dynamic dependencies dynamic dependencies
+	c, err = m.loadChartDir()
+OUTER:
+	for _, r := range req {
+		for _, d := range c.Dependencies() {
+			if d.Name() != r.Name {
+				continue
+			}
+			subchartPath := filepath.Join(m.ChartPath, "charts", d.Fname)
+			man := &Manager{
+				Out:              m.Out,
+				ChartPath:        subchartPath,
+				Keyring:          m.Keyring,
+				SkipUpdate:       true,
+				Getters:          m.Getters,
+				RepositoryConfig: m.RepositoryConfig,
+				RepositoryCache:  m.RepositoryCache,
+				Debug:            m.Debug,
+				RegistryClient:   m.RegistryClient,
+			}
+			if err := man.GetDynamic(); err != nil {
+				return errors.Wrap(err, "failed to get dynamic dependencies of static charts")
+			}
+			continue OUTER
+		}
 	}
 
 	// downloadAll might overwrite dependency version, recalculate lock digest

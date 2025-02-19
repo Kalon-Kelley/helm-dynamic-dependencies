@@ -296,28 +296,27 @@ func runInstall(args []string, client *action.Install, valueOpts *values.Options
 			}
 		}
 
-		if dynamic, _ := action.GetDynamicDependencies(chartRequested, req); len(dynamic) > 0 {
-			man := &downloader.Manager{
-				Out:              out,
-				ChartPath:        cp,
-				Keyring:          client.ChartPathOptions.Keyring,
-				SkipUpdate:       false,
-				Getters:          p,
-				RepositoryConfig: settings.RepositoryConfig,
-				RepositoryCache:  settings.RepositoryCache,
-				Debug:            settings.Debug,
-				RegistryClient:   client.GetRegistryClient(),
-			}
-			if err := man.Update(); err != nil {
-				return nil, err
-			}
-			// Reload the chart with the updated Chart.lock file.
-			if chartRequested, err = loader.Load(man.ChartPath); err != nil {
-				return nil, errors.Wrap(err, "failed reloading chart after repo update")
-			}
+		// Download missing dynamic dependencies
+		man := &downloader.Manager{
+			Out:              out,
+			ChartPath:        cp,
+			Keyring:          client.ChartPathOptions.Keyring,
+			SkipUpdate:       false,
+			Getters:          p,
+			RepositoryConfig: settings.RepositoryConfig,
+			RepositoryCache:  settings.RepositoryCache,
+			Debug:            settings.Debug,
+			RegistryClient:   client.GetRegistryClient(),
+		}
+		if err := man.GetDynamic(); err != nil {
+			return nil, errors.Wrap(err, "failed to get dynamic dependencies")
+		}
+		// TODO(kalon-kelley): OPTIONAL Instead of reloading from man.ChartPath
+		// just ensure that the chart path has not changed
+		if chartRequested, err = loader.Load(man.ChartPath); err != nil {
+			return nil, errors.Wrap(err, "failed reloading chart repo after retrieving dynamic dependencies")
 		}
 	}
-
 	client.Namespace = settings.Namespace()
 
 	// Validate DryRunOption member is one of the allowed values

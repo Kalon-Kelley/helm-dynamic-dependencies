@@ -200,6 +200,7 @@ func LoadFiles(files []*BufferedFile) (*chart.Chart, error) {
 		if err != nil {
 			return c, errors.Wrapf(err, "error unpacking subchart %s in %s", n, c.Name())
 		}
+		sc.Fname = n
 		c.AddDependency(sc)
 	}
 

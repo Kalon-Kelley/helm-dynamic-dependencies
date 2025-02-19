@@ -51,6 +51,8 @@ type Chart struct {
 	// Files are miscellaneous files in a chart archive,
 	// e.g. README, LICENSE, etc.
 	Files []*File `json:"files"`
+	// Fname is the name of the chart file on disk
+	Fname string `json:"fname"`
 
 	parent       *Chart
 	dependencies []*Chart
