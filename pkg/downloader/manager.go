@@ -266,59 +266,38 @@ OUTER:
 // dependency update ensuring this)
 func (m *Manager) GetDynamic() error {
 	baseDir := filepath.Dir(m.ChartPath)
-	// TODO(kalon-kelley): instead of doing this check just load the chart with
-	// something like loader.Load(m.ChartPath) and first check if there are
-	// dynamic dependencies, if so then do the check for tar vs not tar and
-	// extract
+	chart, err := loader.Load(m.ChartPath)
+	if err != nil {
+		return errors.Wrap(err, "error loading chart when resolving dynamic dependencies")
+	}
+	hasDynamic := false
+	for _, r := range chart.Metadata.Dependencies {
+		if r.Dynamic == true {
+			hasDynamic = true
+			break
+		}
+	}
+	if !hasDynamic {
+		return nil
+	}
+
 	if filepath.Ext(m.ChartPath) == ".tgz" {
+		chartDir := filepath.Join(baseDir, chart.Name())
 		file, err := os.Open(m.ChartPath)
 		if err != nil {
 			return err
 		}
-		var chartName string
-		files, err := loader.LoadArchiveFiles(file)
-		file.Close()
-		for _, f := range files {
-			if f.Name != "Chart.yaml" {
-				continue
-			}
-			ch := &chart.Metadata{}
-			if err := yaml.Unmarshal(f.Data, ch); err != nil {
-				return err
-			}
-			chartName = ch.Name
-		}
-		chartDir := filepath.Join(baseDir, chartName)
-		file, err = os.Open(m.ChartPath)
-		if err != nil {
+		if err:= chartutil.Expand(baseDir, file); err != nil {
 			return err
 		}
-		if err := chartutil.Expand(baseDir, file); err != nil {
-			return err
-		}
-		file.Close()
-		fmt.Println("REMOVING", m.ChartPath)
+		defer file.Close()
 		if err := os.Remove(m.ChartPath); err != nil {
-			return errors.Wrap(err, "failed to delete pulled dynamic tar")
+			return err
 		}
 		m.ChartPath = chartDir
 	}
 
 	return m.Update()
-	// if err := writeLock(m.ChartPath, lock, c.Metadata.APIVersion == chart.APIVersionV1); err != nil {
-	// 	return err
-	// }
-	// chartPath, err := chartutil.Save(c, baseDir)
-	// if err != nil {
-	// 	return errors.Wrap(err, "failed to re-tar dynamic dep")
-	// }
-	// fmt.Println("RE-TARRED CHART TO", chartPath)
-	// fmt.Println("REMOVING", m.ChartPath)
-	// if err := os.RemoveAll(m.ChartPath); err != nil {
-	// 	return err
-	// }
-	// m.ChartPath = chartPath
-	// return nil
 }
 
 func (m *Manager) loadChartDir() (*chart.Chart, error) {
