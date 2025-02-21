@@ -150,7 +150,11 @@ func (m *Manager) Build() error {
 //
 // It first reads the Chart.yaml file, and then attempts to
 // negotiate versions based on that. It will download the versions
-// from remote chart repositories unless SkipUpdate is true.
+// from remote chart repositories unless SkipUpdate is true. It will only
+// download static dependencies if m.Dynamic is false (or unset) or dynamic
+// dependencies if m.Dynamic is true. To ensure ALL dependencies are retrieved
+// it will recurse for ALL found dependencies on m.GetDynamic() with Dynamic
+// true
 func (m *Manager) Update() error {
 	c, err := m.loadChartDir()
 	if err != nil {
@@ -208,9 +212,8 @@ func (m *Manager) Update() error {
 		return err
 	}
 
-	// Resolve all static dependencies dynamic dependencies, this is necessary
-	// to ensure that if a dependency is statically included (not dynamic) no
-	// dynamic resolution will be necessary at install time
+	// Resolve all dependencies dynamic dependencies, this is necessary
+	// to ensure that ALL dependencies in a chain are present
 	c, err = m.loadChartDir()
 OUTER:
 	for _, r := range req {
@@ -258,12 +261,10 @@ OUTER:
 
 // Resolves a local charts dynamic dependencies.
 //
-// It first ensures the cart in question is extracted into a dir if it is a
-// tarball. Performs similar functionality to Update function but inversed, req
-// is only dynamic dependencies not static dependencies. Recurses on itself
-// resolving the entire chain until no dynamic dependencies are left (the
-// assumption that static dependencies MUST be fully resolved can be made due to
-// dependency update ensuring this)
+// It first checks if a given chart has any dynamic dependencies to begin with
+// if not then exit early. Then since dependencies will be downloaded check if
+// the chart is a tar, if so extract it and update m.ChartPath to the new
+// directory. Then call Update() on m with Dynamic true
 func (m *Manager) GetDynamic() error {
 	baseDir := filepath.Dir(m.ChartPath)
 	chart, err := loader.Load(m.ChartPath)
